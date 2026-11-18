@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HYPRSHELL_AGENT_GITHUB_REPO="${HYPRSHELL_AGENT_GITHUB_REPO:-openshift-online/hypershell}"
+HYPRSHELL_AGENT_JIRA_PROJECT="${HYPRSHELL_AGENT_JIRA_PROJECT:-HYPERSHELL}"
+HYPRSHELL_AGENT_JIRA_BOARD="${HYPRSHELL_AGENT_JIRA_BOARD:-13804}"
+HYPRSHELL_AGENT_REPO="${HYPRSHELL_AGENT_REPO:-$HOME/hypershell}"
+HYPRSHELL_AGENT_CODEX_BIN="${HYPRSHELL_AGENT_CODEX_BIN:-codex}"
+
+usage() {
+  cat <<USAGE
+hypershell-agent
+
+Launch the HyperShell GitHub-to-Jira reconciliation agent in Codex CLI.
+
+Usage:
+  hypershell-agent [options]
+
+Options:
+  --apply                   Start in write-enabled mode, but still require explicit approval before Jira writes.
+  --github-repo <owner/repo>   GitHub repository to reconcile. Default: openshift-online/hypershell
+  --jira-project <KEY>         Jira project key. Default: HYPERSHELL
+  --jira-board <ID>            Jira board ID. Default: 13804
+  --repo <path>                Local HyperShell repository. Default: \$HOME/hypershell
+  --help                      Show this help.
+
+Environment variables:
+  HYPRSHELL_AGENT_GITHUB_REPO    Default GitHub repository.
+  HYPRSHELL_AGENT_JIRA_PROJECT   Default Jira project.
+  HYPRSHELL_AGENT_JIRA_BOARD     Default Jira board.
+  HYPRSHELL_AGENT_REPO           Default local repository.
+  HYPRSHELL_AGENT_CODEX_BIN      Codex CLI binary.
+
+Default behavior:
+  - Start in read-only mode.
+  - Inventory open GitHub issues.
+  - Compare them with Jira.
+  - Produce a reconciliation report.
+  - Do not create, update, close, or link anything.
+USAGE
+}
+
+mode="read-only"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apply|--write)
+      mode="write"
+      shift
+      ;;
+    --github-repo)
+      [[ $# -ge 2 ]] || { printf 'Missing value for --github-repo\n' >&2; exit 2; }
+      HYPRSHELL_AGENT_GITHUB_REPO="$2"
+      shift 2
+      ;;
+    --jira-project)
+      [[ $# -ge 2 ]] || { printf 'Missing value for --jira-project\n' >&2; exit 2; }
+      HYPRSHELL_AGENT_JIRA_PROJECT="$2"
+      shift 2
+      ;;
+    --jira-board)
+      [[ $# -ge 2 ]] || { printf 'Missing value for --jira-board\n' >&2; exit 2; }
+      HYPRSHELL_AGENT_JIRA_BOARD="$2"
+      shift 2
+      ;;
+    --repo)
+      [[ $# -ge 2 ]] || { printf 'Missing value for --repo\n' >&2; exit 2; }
+      HYPRSHELL_AGENT_REPO="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ ! -d "$HYPRSHELL_AGENT_REPO/.git" ]]; then
+  printf 'HyperShell repository not found: %s\n' "$HYPRSHELL_AGENT_REPO" >&2
+  printf 'Set HYPRSHELL_AGENT_REPO or pass --repo <path>.\n' >&2
+  exit 1
+fi
+
+if ! command -v "$HYPRSHELL_AGENT_CODEX_BIN" >/dev/null 2>&1; then
+  printf 'Codex CLI not found: %s\n' "$HYPRSHELL_AGENT_CODEX_BIN" >&2
+  exit 1
+fi
+
+if [[ "$mode" == "write" ]]; then
+  prompt="Run the HyperShell GitHub-to-Jira reconciliation workflow.
+
+Scope:
+- Repository: $HYPRSHELL_AGENT_GITHUB_REPO
+- Jira project: $HYPRSHELL_AGENT_JIRA_PROJECT
+- Jira board: $HYPRSHELL_AGENT_JIRA_BOARD
+
+Workflow:
+1. Inventory all open GitHub issues.
+2. Compare them with existing Jira issues.
+3. Produce a reviewable reconciliation matrix in Markdown, JSON, and CSV.
+4. Wait for my explicit approval before creating or changing anything.
+5. Only after approval, create missing Jira issues, attach them to the recommended epic, and add the canonical GitHub issue URL.
+
+Guardrails:
+- Never expose the Jira token.
+- Do not create duplicates.
+- Do not modify unrelated issues.
+- Do not close or link issues unless explicitly approved.
+- Always show a preview before any Jira write."
+else
+  prompt="Run a read-only HyperShell GitHub-to-Jira reconciliation.
+
+Scope:
+- Repository: $HYPRSHELL_AGENT_GITHUB_REPO
+- Jira project: $HYPRSHELL_AGENT_JIRA_PROJECT
+- Jira board: $HYPRSHELL_AGENT_JIRA_BOARD
+
+Deliverables:
+1. A markdown reconciliation report.
+2. A JSON reconciliation matrix.
+3. A CSV summary.
+
+For each open GitHub issue, include:
+- GitHub issue number
+- GitHub title
+- GitHub labels
+- Candidate Jira issue
+- Match type: exact-link, semantic, missing, or needs human review
+- Confidence
+- Recommended Jira epic
+- Recommended action
+- Notes
+
+Guardrails:
+- Do not create, edit, close, or link anything in Jira.
+- Do not modify the repository.
+- Do not expose the Jira token.
+- Stop after producing the report."
+fi
+
+exec "$HYPRSHELL_AGENT_CODEX_BIN" -C "$HYPRSHELL_AGENT_REPO" "$prompt"
